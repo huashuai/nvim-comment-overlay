@@ -365,7 +365,8 @@ local function build_content(comments, width)
   lines[#lines + 1] = ""
   lines[#lines + 1] = sep
   hls[#hls + 1] = { line = #lines - 1, col_start = 0, col_end = #sep, hl = HL.separator }
-  local footer = " q close  e edit  d delete  r resolve-thread  t reply  f toggle-focus  z collapse-toggle  +/- resize  R refresh"
+  local footer =
+    " q close  e edit  d delete  r resolve-thread  t reply  f toggle-focus  z collapse-toggle  y copy-storage-path  +/- resize  R refresh"
   lines[#lines + 1] = footer
   hls[#hls + 1] = { line = #lines - 1, col_start = 0, col_end = #footer, hl = HL.footer }
 
@@ -630,6 +631,13 @@ local function add_comment()
   end)
 end
 
+local function copy_storage_path()
+  local path = storage().get_storage_path({ resolve = true })
+  local reg = vim.fn.has("clipboard") == 1 and "+" or '"'
+  vim.fn.setreg(reg, path)
+  vim.notify("Comment storage path copied: " .. path, vim.log.levels.INFO)
+end
+
 local function setup_keymaps()
   if not buf_valid() then
     return
@@ -647,6 +655,7 @@ local function setup_keymaps()
   vim.keymap.set("n", "j", next_comment, map_opts)
   vim.keymap.set("n", "k", prev_comment, map_opts)
   vim.keymap.set("n", "a", add_comment, map_opts)
+  vim.keymap.set("n", "y", copy_storage_path, map_opts)
   vim.keymap.set("n", "R", refresh_comments, map_opts)
   vim.keymap.set("n", "f", toggle_focus_thread, map_opts)
   vim.keymap.set("n", "z", toggle_thread_collapsed, map_opts)

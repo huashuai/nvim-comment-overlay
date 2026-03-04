@@ -103,6 +103,9 @@ All actions are available as user commands.
 :CommentList            Toggle the comment list panel. See
                         |comment-overlay-list-panel|.
 
+                                                      *:CommentGlobalList*
+:CommentGlobalList      Toggle the global comment list panel (all files).
+
                                                              *:CommentNext*
 :CommentNext            Jump to the next comment in the file. Wraps to the
                         first comment when past the last.
@@ -113,6 +116,17 @@ All actions are available as user commands.
 
                                                           *:CommentRefresh*
 :CommentRefresh         Reload comments from disk and repaint overlays/list.
+
+                                                  *:CommentCopyStoragePath*
+:CommentCopyStoragePath Copy resolved storage JSON filepath to the clipboard
+                        register (`+`) when available, else unnamed register.
+
+                                                      *:CommentOpenStorage*
+:CommentOpenStorage     Open storage JSON file in the current window.
+
+                                                  *:CommentMigrateV1ToV2*
+:CommentMigrateV1ToV2   Convert legacy storage shape (`comments` array) to
+                        v2 shape (`comments` map + `files` index) and save.
 
                                                         *:CommentListWidth*
 :CommentListWidth {n}   Set list panel size. For left/right panels, adjusts
@@ -136,8 +150,14 @@ Global ~
 `<leader>cd`  (n)       Delete comment under cursor.
                                               *comment-overlay-keymap-list*
 `<leader>cl`  (n)       Toggle comment list panel.
+                                        *comment-overlay-keymap-global-list*
+`cL`          (n)       Toggle global comment list panel.
                                               *comment-overlay-keymap-signs*
 `<leader>cs`  (n)       Toggle sign/highlight visibility.
+                                       *comment-overlay-keymap-copy-storage*
+`<leader>cy`  (n)       Copy resolved storage JSON filepath.
+                                       *comment-overlay-keymap-open-storage*
+`<leader>co`  (n)       Open storage JSON file.
                                               *comment-overlay-keymap-next*
 `]c`          (n)       Jump to next comment.
                                               *comment-overlay-keymap-prev*
@@ -162,6 +182,7 @@ List panel ~
 `z`                     Toggle collapse for selected thread.
 `+` / `-`               Increase/decrease panel size.
 `R`                     Reload comments from disk.
+`y`                     Copy resolved storage JSON filepath.
 `j` / `k`               Jump to next/previous comment in the list.
 `a`                     Add new comment (switches to source buffer).
 `q`                     Close panel.
@@ -211,7 +232,10 @@ Pass a table to `setup()`. All fields are optional; these are the defaults:
       next = "]c",
       prev = "[c",
       toggle_list = "<leader>cl",
+      toggle_global_list = "cL",
       toggle_signs = "<leader>cs",
+      copy_storage_path = "<leader>cy",
+      open_storage = "<leader>co",
     },
   })
 <
@@ -248,7 +272,12 @@ keymaps.edit            String. Keymap to edit a comment.
 keymaps.next            String. Keymap to jump to the next comment.
 keymaps.prev            String. Keymap to jump to the previous comment.
 keymaps.toggle_list     String. Keymap to toggle the list panel.
+keymaps.toggle_global_list
+                        String. Keymap to toggle global comment list panel.
 keymaps.toggle_signs    String. Keymap to toggle decoration visibility.
+keymaps.copy_storage_path
+                        String. Keymap to copy storage file path.
+keymaps.open_storage    String. Keymap to open storage file.
 
 ==============================================================================
 8. HIGHLIGHTS                                    *comment-overlay-highlights*
@@ -287,6 +316,11 @@ Storage path resolution order:
 3. Walk up from CWD looking for an existing `.nvim-comments.json`.
 4. Fall back to CWD.
 
+Storage format:
+- v1 (legacy): `comments` is an array.
+- v2 (current): `version = 2`, `comments` is a map keyed by comment id, and
+  `files` maps file paths to arrays of root comment ids.
+
 Each comment stores:
   - `id`          Unique identifier (timestamp + random hex)
   - `file`        Relative path from project root
@@ -295,8 +329,10 @@ Each comment stores:
   - `body`        Comment text
   - `author`      Optional author name
   - `kind`        `"comment"` (default) or `"reply"`
-  - `thread_id`   Root comment id for the thread
-  - `parent_id`   Parent comment id (for replies)
+  - `root_id`     Root comment id (for replies)
+  - `reply_ids`   Reply id list (for root comments)
+  - `thread_id`   Legacy-compatible root id field
+  - `parent_id`   Legacy-compatible root id field for replies
   - `resolved_by` Optional actor that resolved the comment
   - `resolved_at` ISO 8601 timestamp when resolved
   - `created_at`  ISO 8601 timestamp

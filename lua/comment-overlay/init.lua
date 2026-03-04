@@ -8,6 +8,7 @@ local store = require("comment-overlay.store")
 local highlights = require("comment-overlay.highlights")
 local ui = require("comment-overlay.ui")
 local list = require("comment-overlay.list")
+local global_list = require("comment-overlay.global-list")
 
 local augroup_name = "CommentOverlay"
 local signs_visible = true
@@ -68,6 +69,9 @@ local function refresh_buf()
   if list.is_open and list.is_open() then
     list.refresh()
   end
+  if global_list.is_open and global_list.is_open() then
+    global_list.refresh()
+  end
 end
 
 --- Render comments for a buffer (clear + display).
@@ -98,6 +102,9 @@ local function refresh_all()
   end
   if list.is_open and list.is_open() then
     list.refresh()
+  end
+  if global_list.is_open and global_list.is_open() then
+    global_list.refresh()
   end
 end
 
@@ -245,6 +252,24 @@ local function toggle_signs()
   end
 end
 
+--- Copy the storage JSON path to clipboard/register.
+local function copy_storage_path()
+  local path = store.get_storage_path({ resolve = true })
+  local reg = vim.fn.has("clipboard") == 1 and "+" or '"'
+  vim.fn.setreg(reg, path)
+  vim.notify("Comment storage path copied: " .. path, vim.log.levels.INFO)
+end
+
+--- Open the storage JSON file in the current window.
+local function open_storage_file()
+  local path = store.get_storage_path({ resolve = true })
+  if vim.fn.filereadable(path) ~= 1 then
+    store.load()
+    store.save()
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+end
+
 ---------------------------------------------------------------------------
 -- User commands
 ---------------------------------------------------------------------------
@@ -278,6 +303,10 @@ local function register_commands()
     list.toggle()
   end, {})
 
+  vim.api.nvim_create_user_command("CommentGlobalList", function()
+    global_list.toggle()
+  end, {})
+
   vim.api.nvim_create_user_command("CommentNext", function()
     next_comment()
   end, {})
@@ -292,6 +321,21 @@ local function register_commands()
 
   vim.api.nvim_create_user_command("CommentRefresh", function()
     refresh_from_disk(true)
+  end, {})
+
+  vim.api.nvim_create_user_command("CommentCopyStoragePath", function()
+    copy_storage_path()
+  end, {})
+
+  vim.api.nvim_create_user_command("CommentOpenStorage", function()
+    open_storage_file()
+  end, {})
+
+  -- Undocumented maintenance command for migrating legacy storage to v2.
+  vim.api.nvim_create_user_command("CommentMigrateV1ToV2", function()
+    local updated = store.migrate_v1_to_v2()
+    refresh_all()
+    vim.notify(string.format("V1->V2 migration complete: %d comments converted", updated), vim.log.levels.INFO)
   end, {})
 
   vim.api.nvim_create_user_command("CommentListWidth", function(cmd)
@@ -351,9 +395,21 @@ local function register_keymaps()
     list.toggle()
   end, vim.tbl_extend("force", opts, { desc = "Toggle comment list" }))
 
+  vim.keymap.set("n", km.toggle_global_list, function()
+    global_list.toggle()
+  end, vim.tbl_extend("force", opts, { desc = "Toggle global comment list" }))
+
   vim.keymap.set("n", km.toggle_signs, function()
     toggle_signs()
   end, vim.tbl_extend("force", opts, { desc = "Toggle comment signs" }))
+
+  vim.keymap.set("n", km.copy_storage_path, function()
+    copy_storage_path()
+  end, vim.tbl_extend("force", opts, { desc = "Copy comment storage path" }))
+
+  vim.keymap.set("n", km.open_storage, function()
+    open_storage_file()
+  end, vim.tbl_extend("force", opts, { desc = "Open comment storage file" }))
 end
 
 ---------------------------------------------------------------------------

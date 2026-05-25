@@ -119,8 +119,8 @@ function M.setup()
   -- Sign icon: the tint color, brightened to stand out in the gutter.
   local sign_fg = dark and lighten(TINT, 0.3) or darken(TINT, 0.2)
 
-  -- Virtual text: brighter tint for readability.
-  local virt_fg = blend(comment_fg, TINT, 0.6)
+  -- Virtual text: distinct from code, warm tint.
+  local virt_fg = dark and lighten(TINT, 0.4) or darken(TINT, 0.3)
 
   -- Border: muted version of sign color.
   local border_fg = blend(comment_fg, TINT, 0.3)
@@ -137,7 +137,7 @@ function M.setup()
 
   set(0, "CommentOverlayBg", { bg = comment_bg })
   set(0, "CommentOverlaySign", { fg = sign_fg })
-  set(0, "CommentOverlayVirt", { fg = virt_fg, italic = true })
+  set(0, "CommentOverlayVirt", { fg = virt_fg, italic = true, bold = true })
   set(0, "CommentOverlayBorder", { fg = border_fg })
   set(0, "CommentOverlayTitle", { fg = title_fg, bold = true })
   set(0, "CommentOverlayCount", { fg = count_fg, bg = count_bg, bold = true })
@@ -159,7 +159,7 @@ local function preview_text(body, resolved, reply_count)
     text = text .. string.format(" (%d replies)", reply_count)
   end
   if resolved then
-    text = "  " .. text
+    text = "✓ " .. text
   end
   return text
 end
@@ -223,17 +223,7 @@ function M.render_buffer(bufnr, comments)
       last_line = buf_line_count - 1
     end
 
-    -- Mark all lines in range for background highlight
-    for lnum = first_line, last_line do
-      if not line_has_bg[lnum] then
-        line_has_bg[lnum] = true
-        local line_opts = {
-          line_hl_group = comment.resolved and "CommentOverlayResolved" or hl.comment_bg,
-          priority = 10,
-        }
-        pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum, 0, line_opts)
-      end
-    end
+    -- No full-range background — keeps the doc readable when many comments exist
 
     -- Place sign on the first line of each comment (only one sign per line)
     if signs.enabled and not line_has_sign[first_line] then

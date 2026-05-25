@@ -180,6 +180,97 @@ function M.open_edit(comment, on_save)
   vim.cmd("startinsert!")
 end
 
+--- Open a reply float with thread context visible above the input area.
+---@param thread Comment[] the thread (root + replies)
+---@param on_save fun(body: string) called with the reply body text
+function M.open_reply(thread, on_save)
+  local root = thread[1]
+  local title = "  Reply  " .. line_range_label(root.line_start, root.line_end)
+
+  -- Build thread context (read-only portion)
+  local content = {}
+  for i, comment in ipairs(thread) do
+    local author = comment.author or "unknown"
+    local date = ""
+    if comment.created_at then
+      date = " " .. string.sub(comment.created_at, 1, 10)
+    end
+    local prefix = i == 1 and " " or "   "
+    table.insert(content, prefix .. author .. date)
+    local body_lines = vim.split(comment.body, "\n", { plain = true })
+    for _, line in ipairs(body_lines) do
+      table.insert(content, prefix .. "  " .. line)
+    end
+    if i < #thread then
+      table.insert(content, "")
+    end
+  end
+
+  -- Separator between context and reply input
+  table.insert(content, "")
+  local sep_line = " " .. string.rep("\u{2500}", 60)
+  table.insert(content, sep_line)
+  table.insert(content, "")
+  table.insert(content, "")
+
+  local reply_start_line = #content -- 1-indexed line count; cursor goes here
+
+  local h = math.max(#content + 5, 12)
+  local max_h = math.floor((vim.o.lines - vim.o.cmdheight - 1) * 0.8)
+  h = math.min(h, max_h)
+
+  local float_cfg = config.options.float
+  local handle = create_float({
+    title = title,
+    lines = content,
+    modifiable = true,
+    height = h,
+    width = math.max(float_cfg.width, 80),
+  })
+
+  -- Make the context area read-only by locking lines above separator
+  -- We use an extmark highlight to visually distinguish context
+  local ns = vim.api.nvim_create_namespace("comment_overlay_reply")
+  for i = 0, reply_start_line - 2 do
+    pcall(vim.api.nvim_buf_set_extmark, handle.buf, ns, i, 0, {
+      line_hl_group = "Comment",
+    })
+  end
+
+  -- Position cursor at the reply area
+  local buf_line_count = vim.api.nvim_buf_line_count(handle.buf)
+  local cursor_line = math.min(reply_start_line, buf_line_count)
+  vim.api.nvim_win_set_cursor(handle.win, { cursor_line, 0 })
+
+  set_close_keymaps(handle.buf)
+
+  -- Save: only capture text below the separator
+  local save_and_close = function()
+    local all_lines = vim.api.nvim_buf_get_lines(handle.buf, reply_start_line - 1, -1, false)
+    -- Trim empty lines from start/end
+    while #all_lines > 0 and all_lines[1]:match("^%s*$") do
+      table.remove(all_lines, 1)
+    end
+    while #all_lines > 0 and all_lines[#all_lines]:match("^%s*$") do
+      table.remove(all_lines)
+    end
+    local body = table.concat(all_lines, "\n")
+    M.close()
+    if body ~= "" then
+      on_save(body)
+    end
+  end
+
+  vim.keymap.set("n", "<C-s>", save_and_close, { buffer = handle.buf, silent = true, nowait = true })
+  vim.keymap.set("n", "<CR>", save_and_close, { buffer = handle.buf, silent = true, nowait = true })
+  vim.keymap.set("i", "<C-s>", function()
+    vim.cmd("stopinsert")
+    save_and_close()
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  vim.cmd("startinsert")
+end
+
 --- Open a read-only preview of an existing comment.
 ---@param comment Comment
 function M.open_preview(comment)
@@ -238,6 +329,110 @@ function M.open_preview(comment)
   set_close_keymaps(handle.buf)
 end
 
+--- Open an interactive thread popup showing all comments/replies on a line.
+--- Supports inline reply and resolve without leaving the popup.
+---@param thread Comment[] ordered list: root comment followed by replies
+---@param opts { on_reply: fun(root_id: string, body: string), on_resolve: fun(id: string) }
+function M.open_thread(thread, opts)
+  if not thread or #thread == 0 then
+    return
+  end
+
+  local root = thread[1]
+  local resolved_tag = root.resolved and " \u{2713} Resolved" or ""
+  local title = "  Thread  " .. line_range_label(root.line_start, root.line_end) .. resolved_tag
+  local title_hl = root.resolved and "DiagnosticOk" or nil
+
+  -- Build thread content like a chat view
+  local content = {}
+  for i, comment in ipairs(thread) do
+    local author = comment.author or "unknown"
+    local date = ""
+    if comment.created_at then
+      date = " " .. string.sub(comment.created_at, 1, 10)
+    end
+    local prefix = i == 1 and " " or "   "
+    local header = prefix .. author .. date
+    if comment.resolved then
+      header = header .. " [resolved]"
+    end
+    table.insert(content, header)
+
+    local body_lines = vim.split(comment.body, "\n", { plain = true })
+    for _, line in ipairs(body_lines) do
+      table.insert(content, prefix .. "  " .. line)
+    end
+    if i < #thread then
+      table.insert(content, "")
+    end
+  end
+
+  table.insert(content, "")
+  table.insert(content, " " .. separator())
+  table.insert(content, " r = reply  x = resolve  ]c = next  [c = prev  q = close")
+
+  local h = math.max(#content + 2, 8)
+  local max_h = math.floor((vim.o.lines - vim.o.cmdheight - 1) * 0.8)
+  h = math.min(h, max_h)
+
+  local float_cfg = config.options.float
+  local handle = create_float({
+    title = title,
+    title_hl = title_hl,
+    lines = content,
+    modifiable = false,
+    height = h,
+    width = math.max(float_cfg.width, 80),
+  })
+
+  -- Close keymaps
+  set_close_keymaps(handle.buf)
+
+  -- Reply: close popup, open reply-with-context, then auto-advance
+  vim.keymap.set("n", "r", function()
+    M.close()
+    M.open_reply(thread, function(body)
+      if opts.on_reply then
+        opts.on_reply(root.id, body)
+      end
+      vim.schedule(function()
+        if opts.on_next then
+          opts.on_next()
+        end
+      end)
+    end)
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  -- Resolve: approve and auto-advance to next comment
+  vim.keymap.set("n", "x", function()
+    M.close()
+    if opts.on_resolve then
+      opts.on_resolve(root.id)
+    end
+    vim.schedule(function()
+      if opts.on_next then
+        opts.on_next()
+      end
+    end)
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  -- Navigate to next comment
+  vim.keymap.set("n", "]c", function()
+    M.close()
+    if opts.on_next then
+      opts.on_next()
+    end
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  -- Navigate to prev comment
+  vim.keymap.set("n", "[c", function()
+    M.close()
+    if opts.on_prev then
+      opts.on_prev()
+    end
+  end, { buffer = handle.buf, silent = true, nowait = true })
+end
+
 --- Close the currently open comment float, if any.
 function M.close()
   local win = current_float.win
@@ -253,6 +448,12 @@ function M.close()
   if buf and vim.api.nvim_buf_is_valid(buf) then
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
+end
+
+--- Check if a float is currently open.
+---@return boolean
+function M.is_open()
+  return current_float.win ~= nil and vim.api.nvim_win_is_valid(current_float.win)
 end
 
 return M

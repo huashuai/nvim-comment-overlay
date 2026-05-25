@@ -45,6 +45,9 @@ local M = {}
 ---@field add string
 ---@field delete string
 ---@field edit string
+---@field reply string
+---@field resolve string
+---@field preview string
 ---@field next string
 ---@field prev string
 ---@field toggle_list string
@@ -108,6 +111,9 @@ M.defaults = {
     add = "<leader>ca",
     delete = "<leader>cd",
     edit = "<leader>ce",
+    reply = "<leader>cr",
+    resolve = "<leader>cx",
+    preview = "<leader>cp",
     next = "]c",
     prev = "[c",
     toggle_list = "<leader>cl",

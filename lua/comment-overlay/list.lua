@@ -520,6 +520,59 @@ local function toggle_focus_thread()
   end
 end
 
+--- Cycle to the next thread in focus mode.
+local function focus_next_thread()
+  if not state.focus_thread_id then
+    next_comment()
+    return
+  end
+  -- Get all threads for the file and find the next one
+  local all_comments = storage().get_for_file(buf_relpath(state.source_buf)) or {}
+  local threads = build_threads(all_comments)
+  local current_idx = nil
+  for i, t in ipairs(threads) do
+    if t.id == state.focus_thread_id then
+      current_idx = i
+      break
+    end
+  end
+  if not current_idx then
+    return
+  end
+  local next_idx = current_idx < #threads and current_idx + 1 or 1
+  state.focus_thread_id = threads[next_idx].id
+  M.refresh()
+  if #state.comment_header_lines > 0 and win_valid(state.win) then
+    vim.api.nvim_win_set_cursor(state.win, { state.comment_header_lines[1], 0 })
+  end
+end
+
+--- Cycle to the previous thread in focus mode.
+local function focus_prev_thread()
+  if not state.focus_thread_id then
+    prev_comment()
+    return
+  end
+  local all_comments = storage().get_for_file(buf_relpath(state.source_buf)) or {}
+  local threads = build_threads(all_comments)
+  local current_idx = nil
+  for i, t in ipairs(threads) do
+    if t.id == state.focus_thread_id then
+      current_idx = i
+      break
+    end
+  end
+  if not current_idx then
+    return
+  end
+  local prev_idx = current_idx > 1 and current_idx - 1 or #threads
+  state.focus_thread_id = threads[prev_idx].id
+  M.refresh()
+  if #state.comment_header_lines > 0 and win_valid(state.win) then
+    vim.api.nvim_win_set_cursor(state.win, { state.comment_header_lines[1], 0 })
+  end
+end
+
 local function toggle_thread_collapsed()
   local comment = comment_obj_at_cursor()
   if not comment then
@@ -651,9 +704,14 @@ local function setup_keymaps()
   vim.keymap.set("n", "t", reply_to_comment, map_opts)
   vim.keymap.set("n", "d", delete_comment, map_opts)
   vim.keymap.set("n", "r", toggle_resolved, map_opts)
+  vim.keymap.set("n", "x", toggle_resolved, map_opts)
   vim.keymap.set("n", "q", M.close, map_opts)
-  vim.keymap.set("n", "j", next_comment, map_opts)
-  vim.keymap.set("n", "k", prev_comment, map_opts)
+  vim.keymap.set("n", "j", focus_next_thread, map_opts)
+  vim.keymap.set("n", "k", focus_prev_thread, map_opts)
+  vim.keymap.set("n", "n", focus_next_thread, map_opts)
+  vim.keymap.set("n", "N", focus_prev_thread, map_opts)
+  vim.keymap.set("n", "]c", focus_next_thread, map_opts)
+  vim.keymap.set("n", "[c", focus_prev_thread, map_opts)
   vim.keymap.set("n", "a", add_comment, map_opts)
   vim.keymap.set("n", "y", copy_storage_path, map_opts)
   vim.keymap.set("n", "R", refresh_comments, map_opts)

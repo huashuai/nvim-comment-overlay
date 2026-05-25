@@ -207,21 +207,49 @@ local function open_thread_for(comment, source_bufnr)
       end
     end,
     on_next = function()
-      next_comment()
-      vim.schedule(function()
-        local next_comments = comments_at_line()
-        if #next_comments > 0 then
-          open_thread_for(next_comments[1], source_bufnr)
+      -- Cycle through all root comments for this file, regardless of buffer bounds
+      local file = current_file()
+      local all = store.get_for_file(file, { roots_only = true })
+      if #all == 0 then return end
+      table.sort(all, function(a, b) return a.line_start < b.line_start end)
+      local current_idx = nil
+      for i, c in ipairs(all) do
+        if c.id == comment.id then
+          current_idx = i
+          break
         end
+      end
+      local next_idx = current_idx and (current_idx % #all) + 1 or 1
+      local next_c = all[next_idx]
+      -- Move cursor if possible
+      local buf_lines = vim.api.nvim_buf_line_count(0)
+      if next_c.line_start <= buf_lines then
+        vim.api.nvim_win_set_cursor(0, { next_c.line_start, 0 })
+      end
+      vim.schedule(function()
+        open_thread_for(next_c, source_bufnr)
       end)
     end,
     on_prev = function()
-      prev_comment()
-      vim.schedule(function()
-        local prev_comments = comments_at_line()
-        if #prev_comments > 0 then
-          open_thread_for(prev_comments[1], source_bufnr)
+      local file = current_file()
+      local all = store.get_for_file(file, { roots_only = true })
+      if #all == 0 then return end
+      table.sort(all, function(a, b) return a.line_start < b.line_start end)
+      local current_idx = nil
+      for i, c in ipairs(all) do
+        if c.id == comment.id then
+          current_idx = i
+          break
         end
+      end
+      local prev_idx = current_idx and ((current_idx - 2) % #all) + 1 or #all
+      local prev_c = all[prev_idx]
+      local buf_lines = vim.api.nvim_buf_line_count(0)
+      if prev_c.line_start <= buf_lines then
+        vim.api.nvim_win_set_cursor(0, { prev_c.line_start, 0 })
+      end
+      vim.schedule(function()
+        open_thread_for(prev_c, source_bufnr)
       end)
     end,
   })

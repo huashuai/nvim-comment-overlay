@@ -405,7 +405,7 @@ function M.open_thread(thread, opts)
 
   table.insert(content, "")
   table.insert(content, " " .. separator())
-  table.insert(content, " r = reply  x = resolve  ]c = next  [c = prev  q = close")
+  table.insert(content, " r = reply  x = resolve  s = skip  ]c = next  [c = prev  q = close")
 
   local h = math.max(#content + 2, 8)
   local max_h = math.floor((vim.o.lines - vim.o.cmdheight - 1) * 0.8)
@@ -456,6 +456,14 @@ function M.open_thread(thread, opts)
         opts.on_next()
       end
     end)
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  -- Skip: advance without resolving or replying
+  vim.keymap.set("n", "s", function()
+    M.close()
+    if opts.on_next then
+      opts.on_next()
+    end
   end, { buffer = handle.buf, silent = true, nowait = true })
 
   -- Navigate to next comment

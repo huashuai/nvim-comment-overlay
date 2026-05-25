@@ -509,4 +509,7 @@ function M.is_open()
   return current_float.win ~= nil and vim.api.nvim_win_is_valid(current_float.win)
 end
 
+M.highlight_source_range = highlight_source_range
+M.clear_source_highlight = clear_source_highlight
+
 return M

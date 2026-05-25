@@ -518,6 +518,20 @@ local function toggle_focus_thread()
   if state.focus_thread_id and #state.comment_header_lines > 0 and win_valid(state.win) then
     vim.api.nvim_win_set_cursor(state.win, { state.comment_header_lines[1], 0 })
   end
+  highlight_focused_thread()
+end
+
+--- Highlight the focused thread's range in the source buffer.
+local function highlight_focused_thread()
+  local ui = require("comment-overlay.ui")
+  if not state.focus_thread_id then
+    ui.clear_source_highlight()
+    return
+  end
+  local comment = storage().get(state.focus_thread_id)
+  if comment and state.source_buf and vim.api.nvim_buf_is_valid(state.source_buf) then
+    ui.highlight_source_range(state.source_buf, comment.line_start, comment.line_end)
+  end
 end
 
 --- Cycle to the next thread in focus mode.
@@ -545,6 +559,7 @@ local function focus_next_thread()
   if #state.comment_header_lines > 0 and win_valid(state.win) then
     vim.api.nvim_win_set_cursor(state.win, { state.comment_header_lines[1], 0 })
   end
+  highlight_focused_thread()
 end
 
 --- Cycle to the previous thread in focus mode.
@@ -571,6 +586,7 @@ local function focus_prev_thread()
   if #state.comment_header_lines > 0 and win_valid(state.win) then
     vim.api.nvim_win_set_cursor(state.win, { state.comment_header_lines[1], 0 })
   end
+  highlight_focused_thread()
 end
 
 local function toggle_thread_collapsed()
@@ -847,6 +863,10 @@ function M.close()
   state.comment_header_lines = {}
   state.focus_thread_id = nil
   state.collapsed_threads = {}
+
+  -- Clear source highlight when list closes
+  local ui = require("comment-overlay.ui")
+  ui.clear_source_highlight()
 end
 
 ---Toggle the comment list panel.

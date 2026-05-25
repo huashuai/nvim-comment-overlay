@@ -138,6 +138,11 @@ function M.setup()
   set(0, "CommentOverlayBg", { bg = comment_bg })
   set(0, "CommentOverlaySign", { fg = sign_fg })
   set(0, "CommentOverlayVirt", { fg = virt_fg, italic = true, bold = true })
+
+  -- Badge style: distinct bg pill for right-aligned comment previews
+  local badge_bg = blend(normal_bg, TINT, dark and 0.25 or 0.15)
+  local badge_fg = dark and lighten(TINT, 0.5) or darken(TINT, 0.3)
+  set(0, "CommentOverlayBadge", { fg = badge_fg, bg = badge_bg, bold = true })
   set(0, "CommentOverlayBorder", { fg = border_fg })
   set(0, "CommentOverlayTitle", { fg = title_fg, bold = true })
   set(0, "CommentOverlayCount", { fg = count_fg, bg = count_bg, bold = true })
@@ -245,19 +250,19 @@ function M.render_buffer(bufnr, comments)
     ::continue::
   end
 
-  -- Second pass: place aggregated virtual text (all comments on that line).
+  -- Second pass: place right-aligned badge virtual text.
   for lnum, segments in pairs(line_virt_texts) do
-    -- Join multiple comments with a separator
     local virt_text = {}
     for i, seg in ipairs(segments) do
       if i > 1 then
-        table.insert(virt_text, { "  │  ", hl.comment_virt })
+        table.insert(virt_text, { " │ ", "CommentOverlayBadge" })
       end
-      table.insert(virt_text, seg)
+      -- Wrap in badge highlight (bg pill)
+      table.insert(virt_text, { " " .. seg[1] .. " ", "CommentOverlayBadge" })
     end
     pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum, 0, {
       virt_text = virt_text,
-      virt_text_pos = "eol",
+      virt_text_pos = "right_align",
       priority = 10,
     })
   end

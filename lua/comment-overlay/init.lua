@@ -13,6 +13,10 @@ local global_list = require("comment-overlay.global-list")
 local augroup_name = "CommentOverlay"
 local signs_visible = true
 
+-- Forward declarations for functions referenced before definition
+local next_comment
+local prev_comment
+
 --- Get the relative file path for the current buffer.
 ---@return string
 local function current_file()
@@ -137,7 +141,8 @@ end
 local function reply_comment()
   local comments = comments_at_line()
   pick_comment(comments, function(comment)
-    ui.open_add(comment.line_start, comment.line_end, function(body)
+    local thread = store.get_thread(comment.id)
+    ui.open_reply(thread, function(body)
       local reply = store.add_reply(comment.id, body, config.get_actor())
       if not reply then
         vim.notify("Unable to add reply", vim.log.levels.WARN)
@@ -179,6 +184,88 @@ local function preview_comment()
   end)
 end
 
+--- Show the interactive thread popup for a given comment.
+---@param comment Comment
+---@param source_bufnr? number
+local function open_thread_for(comment, source_bufnr)
+  source_bufnr = source_bufnr or vim.api.nvim_get_current_buf()
+  local thread = store.get_thread(comment.id)
+  ui.open_thread(thread, {
+    source_buf = source_bufnr,
+    on_reply = function(root_id, body)
+      store.add_reply(root_id, body, config.get_actor())
+      refresh_buf()
+    end,
+    on_resolve = function(id)
+      store.resolve(id, config.get_actor())
+      refresh_buf()
+    end,
+    on_reopen = function(root_id)
+      local updated_comment = store.get(root_id)
+      if updated_comment then
+        open_thread_for(updated_comment, source_bufnr)
+      end
+    end,
+    on_next = function()
+      -- Cycle through all root comments for this file, regardless of buffer bounds
+      local file = current_file()
+      local all = store.get_for_file(file, { roots_only = true })
+      if #all == 0 then return end
+      table.sort(all, function(a, b) return a.line_start < b.line_start end)
+      local current_idx = nil
+      for i, c in ipairs(all) do
+        if c.id == comment.id then
+          current_idx = i
+          break
+        end
+      end
+      local next_idx = current_idx and (current_idx % #all) + 1 or 1
+      local next_c = all[next_idx]
+      -- Move cursor if possible
+      local buf_lines = vim.api.nvim_buf_line_count(0)
+      if next_c.line_start <= buf_lines then
+        vim.api.nvim_win_set_cursor(0, { next_c.line_start, 0 })
+      end
+      vim.schedule(function()
+        open_thread_for(next_c, source_bufnr)
+      end)
+    end,
+    on_prev = function()
+      local file = current_file()
+      local all = store.get_for_file(file, { roots_only = true })
+      if #all == 0 then return end
+      table.sort(all, function(a, b) return a.line_start < b.line_start end)
+      local current_idx = nil
+      for i, c in ipairs(all) do
+        if c.id == comment.id then
+          current_idx = i
+          break
+        end
+      end
+      local prev_idx = current_idx and ((current_idx - 2) % #all) + 1 or #all
+      local prev_c = all[prev_idx]
+      local buf_lines = vim.api.nvim_buf_line_count(0)
+      if prev_c.line_start <= buf_lines then
+        vim.api.nvim_win_set_cursor(0, { prev_c.line_start, 0 })
+      end
+      vim.schedule(function()
+        open_thread_for(prev_c, source_bufnr)
+      end)
+    end,
+  })
+end
+
+--- Show the interactive thread popup for the comment under cursor.
+local function show_thread()
+  local comments = comments_at_line()
+  if #comments == 0 then
+    return
+  end
+  pick_comment(comments, function(comment)
+    open_thread_for(comment)
+  end)
+end
+
 --- Toggle the resolved status of the comment under the cursor.
 local function resolve_comment()
   local comments = comments_at_line()
@@ -189,47 +276,56 @@ local function resolve_comment()
 end
 
 --- Jump to the next comment in the current file.
-local function next_comment()
+next_comment = function()
   local file = current_file()
   local comments = store.get_for_file(file, { roots_only = true })
-  if #comments == 0 then
+  -- Prefer unresolved comments for navigation
+  local unresolved = vim.tbl_filter(function(c) return not c.resolved end, comments)
+  local targets = #unresolved > 0 and unresolved or comments
+  if #targets == 0 then
     vim.notify("No comments in this file", vim.log.levels.INFO)
     return
   end
-  table.sort(comments, function(a, b)
+  table.sort(targets, function(a, b)
     return a.line_start < b.line_start
   end)
+  local buf_lines = vim.api.nvim_buf_line_count(0)
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  for _, c in ipairs(comments) do
-    if c.line_start > cursor_line then
+  for _, c in ipairs(targets) do
+    if c.line_start > cursor_line and c.line_start <= buf_lines then
       vim.api.nvim_win_set_cursor(0, { c.line_start, 0 })
       return
     end
   end
-  -- Wrap around to first comment
-  vim.api.nvim_win_set_cursor(0, { comments[1].line_start, 0 })
+  -- Wrap around to first valid comment
+  local target_line = math.min(targets[1].line_start, buf_lines)
+  vim.api.nvim_win_set_cursor(0, { target_line, 0 })
 end
 
 --- Jump to the previous comment in the current file.
-local function prev_comment()
+prev_comment = function()
   local file = current_file()
   local comments = store.get_for_file(file, { roots_only = true })
-  if #comments == 0 then
+  local unresolved = vim.tbl_filter(function(c) return not c.resolved end, comments)
+  local targets = #unresolved > 0 and unresolved or comments
+  if #targets == 0 then
     vim.notify("No comments in this file", vim.log.levels.INFO)
     return
   end
-  table.sort(comments, function(a, b)
+  table.sort(targets, function(a, b)
     return a.line_start < b.line_start
   end)
+  local buf_lines = vim.api.nvim_buf_line_count(0)
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  for i = #comments, 1, -1 do
-    if comments[i].line_start < cursor_line then
-      vim.api.nvim_win_set_cursor(0, { comments[i].line_start, 0 })
+  for i = #targets, 1, -1 do
+    if targets[i].line_start < cursor_line and targets[i].line_start <= buf_lines then
+      vim.api.nvim_win_set_cursor(0, { targets[i].line_start, 0 })
       return
     end
   end
-  -- Wrap around to last comment
-  vim.api.nvim_win_set_cursor(0, { comments[#comments].line_start, 0 })
+  -- Wrap around to last valid comment
+  local target_line = math.min(targets[#targets].line_start, buf_lines)
+  vim.api.nvim_win_set_cursor(0, { target_line, 0 })
 end
 
 --- Toggle sign/highlight visibility across all buffers.
@@ -399,6 +495,18 @@ local function register_keymaps()
     global_list.toggle()
   end, vim.tbl_extend("force", opts, { desc = "Toggle global comment list" }))
 
+  vim.keymap.set("n", km.reply, function()
+    reply_comment()
+  end, vim.tbl_extend("force", opts, { desc = "Reply to comment" }))
+
+  vim.keymap.set("n", km.resolve, function()
+    resolve_comment()
+  end, vim.tbl_extend("force", opts, { desc = "Resolve comment" }))
+
+  vim.keymap.set("n", km.preview, function()
+    show_thread()
+  end, vim.tbl_extend("force", opts, { desc = "Show comment thread" }))
+
   vim.keymap.set("n", km.toggle_signs, function()
     toggle_signs()
   end, vim.tbl_extend("force", opts, { desc = "Toggle comment signs" }))
@@ -461,6 +569,30 @@ local function register_autocommands()
       highlights.setup()
     end,
   })
+
+  -- File watcher: auto-refresh when .nvim-comments.json changes on disk
+  -- This enables real-time co-editing with external tools (e.g. Claude Code)
+  local uv = vim.uv or vim.loop
+  local watch_path = store.get_storage_path({ resolve = true })
+  local watcher = uv.new_fs_event()
+  if watcher then
+    local debounce_timer = nil
+    uv.fs_event_start(watcher, watch_path, {}, function(err)
+      if err then return end
+      -- Debounce: wait 100ms for writes to settle
+      if debounce_timer then
+        debounce_timer:stop()
+      end
+      debounce_timer = uv.new_timer()
+      debounce_timer:start(100, 0, vim.schedule_wrap(function()
+        debounce_timer:close()
+        debounce_timer = nil
+        if store.reload_if_changed() then
+          refresh_all()
+        end
+      end))
+    end)
+  end
 end
 
 ---------------------------------------------------------------------------

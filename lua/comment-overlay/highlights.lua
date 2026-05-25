@@ -110,8 +110,8 @@ function M.setup()
   local normal_bg = get_hl_bg("Normal") or (dark and "#1e1e2e" or "#ffffff")
   local comment_fg = get_hl_fg("Comment") or (dark and "#6c7086" or "#9ca0b0")
 
-  -- Comment line background: blend normal bg with tint at ~18% (visible but subtle).
-  local comment_bg = blend(normal_bg, TINT, dark and 0.18 or 0.12)
+  -- Comment line background: blend normal bg with tint (stronger for visibility).
+  local comment_bg = blend(normal_bg, TINT, dark and 0.28 or 0.18)
 
   -- Resolved background: blend with green instead, dimmer.
   local resolved_bg = blend(normal_bg, "#68a87a", dark and 0.10 or 0.08)
@@ -119,8 +119,8 @@ function M.setup()
   -- Sign icon: the tint color, brightened to stand out in the gutter.
   local sign_fg = dark and lighten(TINT, 0.3) or darken(TINT, 0.2)
 
-  -- Virtual text: between comment_fg and tint, italic.
-  local virt_fg = blend(comment_fg, TINT, 0.4)
+  -- Virtual text: distinct from code, warm tint.
+  local virt_fg = dark and lighten(TINT, 0.4) or darken(TINT, 0.3)
 
   -- Border: muted version of sign color.
   local border_fg = blend(comment_fg, TINT, 0.3)
@@ -137,7 +137,12 @@ function M.setup()
 
   set(0, "CommentOverlayBg", { bg = comment_bg })
   set(0, "CommentOverlaySign", { fg = sign_fg })
-  set(0, "CommentOverlayVirt", { fg = virt_fg, italic = true })
+  set(0, "CommentOverlayVirt", { fg = virt_fg, italic = true, bold = true })
+
+  -- Badge style: distinct bg pill for right-aligned comment previews
+  local badge_bg = blend(normal_bg, TINT, dark and 0.25 or 0.15)
+  local badge_fg = dark and lighten(TINT, 0.5) or darken(TINT, 0.3)
+  set(0, "CommentOverlayBadge", { fg = badge_fg, bg = badge_bg, bold = true })
   set(0, "CommentOverlayBorder", { fg = border_fg })
   set(0, "CommentOverlayTitle", { fg = title_fg, bold = true })
   set(0, "CommentOverlayCount", { fg = count_fg, bg = count_bg, bold = true })
@@ -159,7 +164,7 @@ local function preview_text(body, resolved, reply_count)
     text = text .. string.format(" (%d replies)", reply_count)
   end
   if resolved then
-    text = "  " .. text
+    text = "✓ " .. text
   end
   return text
 end
@@ -207,25 +212,23 @@ function M.render_buffer(bufnr, comments)
   local line_has_bg = {} ---@type table<number, boolean>
   local line_virt_texts = {} ---@type table<number, {string,string}[]>
 
+  local buf_line_count = vim.api.nvim_buf_line_count(bufnr)
+
   for _, comment in ipairs(sorted) do
     if is_reply(comment) then
       goto continue
     end
 
     local first_line = comment.line_start - 1 -- 0-indexed
-    local last_line = comment.line_end - 1
+    local last_line = math.min(comment.line_end - 1, buf_line_count - 1)
 
-    -- Mark all lines in range for background highlight
-    for lnum = first_line, last_line do
-      if not line_has_bg[lnum] then
-        line_has_bg[lnum] = true
-        local line_opts = {
-          line_hl_group = comment.resolved and "CommentOverlayResolved" or hl.comment_bg,
-          priority = 10,
-        }
-        pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum, 0, line_opts)
-      end
+    -- Clamp comments beyond buffer to the last line
+    if first_line >= buf_line_count then
+      first_line = buf_line_count - 1
+      last_line = buf_line_count - 1
     end
+
+    -- No full-range background — keeps the doc readable when many comments exist
 
     -- Place sign on the first line of each comment (only one sign per line)
     if signs.enabled and not line_has_sign[first_line] then
@@ -247,19 +250,19 @@ function M.render_buffer(bufnr, comments)
     ::continue::
   end
 
-  -- Second pass: place aggregated virtual text (all comments on that line).
+  -- Second pass: place right-aligned badge virtual text.
   for lnum, segments in pairs(line_virt_texts) do
-    -- Join multiple comments with a separator
     local virt_text = {}
     for i, seg in ipairs(segments) do
       if i > 1 then
-        table.insert(virt_text, { "  │  ", hl.comment_virt })
+        table.insert(virt_text, { " │ ", "CommentOverlayBadge" })
       end
-      table.insert(virt_text, seg)
+      -- Wrap in badge highlight (bg pill)
+      table.insert(virt_text, { " " .. seg[1] .. " ", "CommentOverlayBadge" })
     end
     pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum, 0, {
       virt_text = virt_text,
-      virt_text_pos = "eol",
+      virt_text_pos = "right_align",
       priority = 10,
     })
   end

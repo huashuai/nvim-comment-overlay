@@ -9,6 +9,42 @@ local M = {}
 ---@type { win: number|nil, buf: number|nil }
 local current_float = { win = nil, buf = nil }
 
+--- Namespace for highlighting the active comment's range in the source buffer.
+local active_ns = vim.api.nvim_create_namespace("comment_overlay_active")
+
+--- Tracks which source buffer has the active highlight.
+---@type number|nil
+local active_highlight_buf = nil
+
+--- Clear the active comment highlight from the source buffer.
+local function clear_source_highlight()
+  if active_highlight_buf and vim.api.nvim_buf_is_valid(active_highlight_buf) then
+    vim.api.nvim_buf_clear_namespace(active_highlight_buf, active_ns, 0, -1)
+  end
+  active_highlight_buf = nil
+end
+
+--- Highlight a line range in a source buffer to show which comment is active.
+---@param bufnr number
+---@param line_start number 1-indexed
+---@param line_end number 1-indexed
+local function highlight_source_range(bufnr, line_start, line_end)
+  clear_source_highlight()
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  active_highlight_buf = bufnr
+  local buf_lines = vim.api.nvim_buf_line_count(bufnr)
+  local first = math.min(line_start - 1, buf_lines - 1)
+  local last = math.min(line_end - 1, buf_lines - 1)
+  for lnum = first, last do
+    pcall(vim.api.nvim_buf_set_extmark, bufnr, active_ns, lnum, 0, {
+      line_hl_group = "CommentOverlayBg",
+      priority = 20,
+    })
+  end
+end
+
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
@@ -376,6 +412,9 @@ function M.open_thread(thread, opts)
   h = math.min(h, max_h)
 
   local float_cfg = config.options.float
+  -- Capture source buffer before opening float (float changes current buf)
+  local source_bufnr = opts.source_buf or vim.api.nvim_get_current_buf()
+
   local handle = create_float({
     title = title,
     title_hl = title_hl,
@@ -384,6 +423,9 @@ function M.open_thread(thread, opts)
     height = h,
     width = math.max(float_cfg.width, 80),
   })
+
+  -- Highlight the comment's range in the source buffer
+  highlight_source_range(source_bufnr, root.line_start, root.line_end)
 
   -- Close keymaps
   set_close_keymaps(handle.buf)
@@ -438,6 +480,9 @@ function M.close()
   local win = current_float.win
   local buf = current_float.buf
   current_float = { win = nil, buf = nil }
+
+  -- Clear active comment highlight from source buffer
+  clear_source_highlight()
 
   -- Clear the autocommand group to prevent stale callbacks.
   pcall(vim.api.nvim_create_augroup, "CommentOverlayFloat", { clear = true })

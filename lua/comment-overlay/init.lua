@@ -186,9 +186,12 @@ end
 
 --- Show the interactive thread popup for a given comment.
 ---@param comment Comment
-local function open_thread_for(comment)
+---@param source_bufnr? number
+local function open_thread_for(comment, source_bufnr)
+  source_bufnr = source_bufnr or vim.api.nvim_get_current_buf()
   local thread = store.get_thread(comment.id)
   ui.open_thread(thread, {
+    source_buf = source_bufnr,
     on_reply = function(root_id, body)
       store.add_reply(root_id, body, config.get_actor())
       refresh_buf()
@@ -200,7 +203,7 @@ local function open_thread_for(comment)
     on_reopen = function(root_id)
       local updated_comment = store.get(root_id)
       if updated_comment then
-        open_thread_for(updated_comment)
+        open_thread_for(updated_comment, source_bufnr)
       end
     end,
     on_next = function()
@@ -208,7 +211,7 @@ local function open_thread_for(comment)
       vim.schedule(function()
         local next_comments = comments_at_line()
         if #next_comments > 0 then
-          open_thread_for(next_comments[1])
+          open_thread_for(next_comments[1], source_bufnr)
         end
       end)
     end,
@@ -217,7 +220,7 @@ local function open_thread_for(comment)
       vim.schedule(function()
         local prev_comments = comments_at_line()
         if #prev_comments > 0 then
-          open_thread_for(prev_comments[1])
+          open_thread_for(prev_comments[1], source_bufnr)
         end
       end)
     end,

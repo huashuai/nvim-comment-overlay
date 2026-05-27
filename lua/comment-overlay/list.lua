@@ -19,6 +19,11 @@ local state = {
   autocmd_group = nil, ---@type number|nil
 }
 
+-- Forward declarations
+local next_comment
+local prev_comment
+local highlight_focused_thread
+
 -- Helpers -------------------------------------------------------------------
 
 ---Lazy-load the store module so list.lua has no hard init-time dep.
@@ -522,7 +527,7 @@ local function toggle_focus_thread()
 end
 
 --- Highlight the focused thread's range in the source buffer.
-local function highlight_focused_thread()
+highlight_focused_thread = function()
   local ui = require("comment-overlay.ui")
   if not state.focus_thread_id then
     ui.clear_source_highlight()
@@ -656,7 +661,7 @@ local function shrink_list()
   adjust_size(-8)
 end
 
-local function next_comment()
+next_comment = function()
   if not win_valid(state.win) then
     return
   end
@@ -672,7 +677,7 @@ local function next_comment()
   end
 end
 
-local function prev_comment()
+prev_comment = function()
   if not win_valid(state.win) then
     return
   end
@@ -763,6 +768,45 @@ local function setup_autocmds()
       state.focus_thread_id = nil
       state.collapsed_threads = {}
       M.refresh()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = state.autocmd_group,
+    buffer = state.buf,
+    callback = function()
+      local ui = require("comment-overlay.ui")
+      local comment = comment_obj_at_cursor()
+      if not comment then
+        ui.clear_source_highlight()
+        return
+      end
+      if not win_valid(state.source_win) then
+        return
+      end
+      local source_bufnr = vim.api.nvim_win_get_buf(state.source_win)
+      -- If anchor_text exists, highlight just that text; otherwise highlight the line range
+      if comment.anchor_text and comment.anchor_text ~= "" then
+        local first_line = comment.line_start - 1
+        local buf_line = vim.api.nvim_buf_get_lines(source_bufnr, first_line, first_line + 1, false)[1] or ""
+        local col_start = buf_line:find(comment.anchor_text, 1, true)
+        if col_start then
+          ui.clear_source_highlight()
+          -- Highlight just the anchor text range
+          local active_ns = vim.api.nvim_create_namespace("comment_overlay_active")
+          pcall(vim.api.nvim_buf_set_extmark, source_bufnr, active_ns, first_line, col_start - 1, {
+            end_col = col_start - 1 + #comment.anchor_text,
+            hl_group = "CommentOverlayBg",
+            priority = 20,
+          })
+        else
+          ui.highlight_source_range(source_bufnr, comment.line_start, comment.line_end)
+        end
+      else
+        ui.highlight_source_range(source_bufnr, comment.line_start, comment.line_end)
+      end
+      -- Scroll source window to show the comment
+      pcall(vim.api.nvim_win_set_cursor, state.source_win, { comment.line_start, 0 })
     end,
   })
 

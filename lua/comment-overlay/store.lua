@@ -443,8 +443,9 @@ end
 ---@param body string
 ---@param author string|nil
 ---@param parent_id string|nil
+---@param anchor_text string|nil selected text the comment is attached to
 ---@return Comment
-function M.add(file, line_start, line_end, body, author, parent_id)
+function M.add(file, line_start, line_end, body, author, parent_id, anchor_text)
   ensure_loaded()
 
   local now = iso_now()
@@ -480,6 +481,7 @@ function M.add(file, line_start, line_end, body, author, parent_id)
     line_end = line_end,
     body = body,
     author = author,
+    anchor_text = anchor_text,
     kind = kind,
     root_id = kind == "reply" and tid or nil,
     thread_id = tid,

@@ -240,6 +240,51 @@ function M.render_buffer(bufnr, comments)
       line_has_sign[first_line] = true
     end
 
+    -- Highlight anchor text in the buffer if present
+    if comment.anchor_text and comment.anchor_text ~= "" then
+      local anchor = comment.anchor_text
+      local anchor_lines = vim.split(anchor, "\n", { plain = true })
+      -- Search for anchor on the first line of the comment
+      local buf_line = vim.api.nvim_buf_get_lines(bufnr, first_line, first_line + 1, false)[1] or ""
+      local col_start = buf_line:find(anchor_lines[1], 1, true)
+      if col_start then
+        local anchor_hl = comment.resolved and "CommentOverlayResolved" or "CommentOverlayBg"
+        if #anchor_lines == 1 then
+          pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, first_line, col_start - 1, {
+            end_col = col_start - 1 + #anchor_lines[1],
+            hl_group = anchor_hl,
+            priority = 15,
+          })
+        else
+          -- Multi-line anchor: highlight first line from match to end
+          pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, first_line, col_start - 1, {
+            end_col = #buf_line,
+            hl_group = anchor_hl,
+            priority = 15,
+          })
+          -- Intermediate lines fully highlighted
+          for offset = 1, #anchor_lines - 2 do
+            local lnum = first_line + offset
+            if lnum < buf_line_count then
+              pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum, 0, {
+                line_hl_group = anchor_hl,
+                priority = 15,
+              })
+            end
+          end
+          -- Last line up to anchor end
+          local end_lnum = first_line + #anchor_lines - 1
+          if end_lnum < buf_line_count then
+            pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, end_lnum, 0, {
+              end_col = #anchor_lines[#anchor_lines],
+              hl_group = anchor_hl,
+              priority = 15,
+            })
+          end
+        end
+      end
+    end
+
     -- Collect virtual text for the first line of this comment
     local virt_hl = comment.resolved and "CommentOverlayResolved" or hl.comment_virt
     local text = " " .. preview_text(comment.body, comment.resolved, reply_count_by_thread[thread_id(comment)] or 0)

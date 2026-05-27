@@ -381,6 +381,16 @@ function M.open_thread(thread, opts)
 
   -- Build thread content like a chat view
   local content = {}
+
+  -- Show anchor text (selected text the comment is attached to)
+  if root.anchor_text and root.anchor_text ~= "" then
+    local anchor_lines = vim.split(root.anchor_text, "\n", { plain = true })
+    for _, line in ipairs(anchor_lines) do
+      table.insert(content, " \u{2502} " .. line)
+    end
+    table.insert(content, "")
+  end
+
   for i, comment in ipairs(thread) do
     local author = comment.author or "unknown"
     local date = ""
@@ -405,7 +415,7 @@ function M.open_thread(thread, opts)
 
   table.insert(content, "")
   table.insert(content, " " .. separator())
-  table.insert(content, " r = reply  x = resolve  s = skip  ]c = next  [c = prev  q = close")
+  table.insert(content, " r = reply  x = resolve  d = delete  s = skip  ]c = next  [c = prev  q = close")
 
   local h = math.max(#content + 2, 8)
   local max_h = math.floor((vim.o.lines - vim.o.cmdheight - 1) * 0.8)
@@ -450,6 +460,19 @@ function M.open_thread(thread, opts)
     M.close()
     if opts.on_resolve then
       opts.on_resolve(root.id)
+    end
+    vim.schedule(function()
+      if opts.on_next then
+        opts.on_next()
+      end
+    end)
+  end, { buffer = handle.buf, silent = true, nowait = true })
+
+  -- Delete: remove comment and auto-advance
+  vim.keymap.set("n", "d", function()
+    M.close()
+    if opts.on_delete then
+      opts.on_delete(root.id)
     end
     vim.schedule(function()
       if opts.on_next then

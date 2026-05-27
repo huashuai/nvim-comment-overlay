@@ -9,7 +9,6 @@ local M = {}
 ---@field highlights CommentOverlayHighlights
 ---@field float CommentOverlayFloat
 ---@field list CommentOverlayList
----@field storage CommentOverlayStorage
 ---@field keymaps CommentOverlayKeymaps
 
 ---@class CommentOverlaySigns
@@ -37,10 +36,6 @@ local M = {}
 ---@field height number  -- for bottom position
 ---@field auto_preview boolean
 
----@class CommentOverlayStorage
----@field path string|nil  -- nil = auto-detect project root
----@field filename string  -- default ".nvim-comments.json"
-
 ---@class CommentOverlayKeymaps
 ---@field add string
 ---@field delete string
@@ -51,10 +46,7 @@ local M = {}
 ---@field next string
 ---@field prev string
 ---@field toggle_list string
----@field toggle_global_list string
 ---@field toggle_signs string
----@field copy_storage_path string
----@field open_storage string
 
 ---@class Comment
 ---@field id string
@@ -78,6 +70,10 @@ M.namespace = "comment_overlay"
 
 M.defaults = {
   actor = nil,
+  storage = {
+    filename = ".nvim-comments.json",
+    path = nil,
+  },
   signs = {
     enabled = true,
     icon = "󰆉",  -- nerd font comment icon
@@ -103,10 +99,6 @@ M.defaults = {
     height = 15,
     auto_preview = true,
   },
-  storage = {
-    path = nil,  -- auto-detect
-    filename = ".nvim-comments.json",
-  },
   keymaps = {
     add = "<leader>ca",
     delete = "<leader>cd",
@@ -117,10 +109,7 @@ M.defaults = {
     next = "]c",
     prev = "[c",
     toggle_list = "<leader>cl",
-    toggle_global_list = "cL",
     toggle_signs = "<leader>cs",
-    copy_storage_path = "<leader>cy",
-    open_storage = "<leader>co",
   },
 }
 

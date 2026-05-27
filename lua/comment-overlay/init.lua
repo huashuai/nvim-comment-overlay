@@ -8,7 +8,6 @@ local store = require("comment-overlay.store")
 local highlights = require("comment-overlay.highlights")
 local ui = require("comment-overlay.ui")
 local list = require("comment-overlay.list")
-local global_list = require("comment-overlay.global-list")
 
 local augroup_name = "CommentOverlay"
 local signs_visible = true
@@ -69,12 +68,8 @@ local function refresh_buf()
   local file = store.get_relative_path(name)
   local comments = store.get_for_file(file)
   highlights.refresh(bufnr, comments)
-  -- Also refresh the list panel if open
   if list.is_open and list.is_open() then
     list.refresh()
-  end
-  if global_list.is_open and global_list.is_open() then
-    global_list.refresh()
   end
 end
 
@@ -90,38 +85,6 @@ local function render_buf(bufnr)
   highlights.refresh(bufnr, comments)
 end
 
---- Refresh comment overlays (and list panel) across loaded buffers.
-local function refresh_all()
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) then
-      local name = vim.api.nvim_buf_get_name(bufnr)
-      if name ~= "" then
-        if signs_visible then
-          render_buf(bufnr)
-        else
-          highlights.clear_buffer(bufnr)
-        end
-      end
-    end
-  end
-  if list.is_open and list.is_open() then
-    list.refresh()
-  end
-  if global_list.is_open and global_list.is_open() then
-    global_list.refresh()
-  end
-end
-
---- Force reload comments from disk and repaint UI.
----@param notify boolean|nil
-local function refresh_from_disk(notify)
-  store.reload()
-  refresh_all()
-  if notify ~= false then
-    vim.notify("Comments refreshed", vim.log.levels.INFO)
-  end
-end
-
 ---------------------------------------------------------------------------
 -- Actions
 ---------------------------------------------------------------------------
@@ -129,10 +92,11 @@ end
 --- Add a comment spanning line_start..line_end in the current buffer.
 ---@param line_start number
 ---@param line_end number
-local function add_comment(line_start, line_end)
+---@param anchor_text? string
+local function add_comment(line_start, line_end, anchor_text)
   local file = current_file()
   ui.open_add(line_start, line_end, function(body)
-    store.add(file, line_start, line_end, body, config.get_actor())
+    store.add(file, line_start, line_end, body, config.get_actor(), nil, anchor_text)
     refresh_buf()
   end)
 end
@@ -200,6 +164,10 @@ local function open_thread_for(comment, source_bufnr)
       store.resolve(id, config.get_actor())
       refresh_buf()
     end,
+    on_delete = function(id)
+      store.delete(id)
+      refresh_buf()
+    end,
     on_reopen = function(root_id)
       local updated_comment = store.get(root_id)
       if updated_comment then
@@ -259,6 +227,27 @@ end
 local function show_thread()
   local comments = comments_at_line()
   if #comments == 0 then
+    -- Jump to the nearest comment and show its thread
+    local file = current_file()
+    local all = store.get_for_file(file, { roots_only = true })
+    if #all == 0 then
+      vim.notify("No comments in this file", vim.log.levels.INFO)
+      return
+    end
+    table.sort(all, function(a, b) return a.line_start < b.line_start end)
+    local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+    local target
+    for _, c in ipairs(all) do
+      if c.line_start >= cursor_line then
+        target = c
+        break
+      end
+    end
+    target = target or all[1]
+    local buf_lines = vim.api.nvim_buf_line_count(0)
+    local line = math.min(target.line_start, buf_lines)
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
+    open_thread_for(target)
     return
   end
   pick_comment(comments, function(comment)
@@ -399,10 +388,6 @@ local function register_commands()
     list.toggle()
   end, {})
 
-  vim.api.nvim_create_user_command("CommentGlobalList", function()
-    global_list.toggle()
-  end, {})
-
   vim.api.nvim_create_user_command("CommentNext", function()
     next_comment()
   end, {})
@@ -413,25 +398,6 @@ local function register_commands()
 
   vim.api.nvim_create_user_command("CommentToggleSigns", function()
     toggle_signs()
-  end, {})
-
-  vim.api.nvim_create_user_command("CommentRefresh", function()
-    refresh_from_disk(true)
-  end, {})
-
-  vim.api.nvim_create_user_command("CommentCopyStoragePath", function()
-    copy_storage_path()
-  end, {})
-
-  vim.api.nvim_create_user_command("CommentOpenStorage", function()
-    open_storage_file()
-  end, {})
-
-  -- Undocumented maintenance command for migrating legacy storage to v2.
-  vim.api.nvim_create_user_command("CommentMigrateV1ToV2", function()
-    local updated = store.migrate_v1_to_v2()
-    refresh_all()
-    vim.notify(string.format("V1->V2 migration complete: %d comments converted", updated), vim.log.levels.INFO)
   end, {})
 
   vim.api.nvim_create_user_command("CommentListWidth", function(cmd)
@@ -454,21 +420,35 @@ local function register_keymaps()
   local km = config.options.keymaps
   local opts = { silent = true }
 
-  -- Normal mode mappings
+  -- Normal mode: comment on current line (no anchor)
   vim.keymap.set("n", km.add, function()
     local lnum = vim.api.nvim_win_get_cursor(0)[1]
     add_comment(lnum, lnum)
   end, vim.tbl_extend("force", opts, { desc = "Add comment" }))
 
-  -- Visual mode add: capture selection range
+  -- Visual mode: comment on selection (with anchor text)
   vim.keymap.set("v", km.add, function()
-    local start = vim.fn.line("v")
-    local end_ = vim.fn.line(".")
-    if start > end_ then
-      start, end_ = end_, start
-    end
+    -- Exit visual mode and use marks to get the selection
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
-    add_comment(start, end_)
+    vim.schedule(function()
+      local start = vim.fn.line("'<")
+      local end_ = vim.fn.line("'>")
+      if start > end_ then
+        start, end_ = end_, start
+      end
+      local lines = vim.api.nvim_buf_get_lines(0, start - 1, end_, false)
+      -- Trim to column range for partial-line selections
+      local col_start = vim.fn.col("'<")
+      local col_end = vim.fn.col("'>")
+      if #lines == 1 then
+        lines[1] = lines[1]:sub(col_start, col_end)
+      elseif #lines > 1 then
+        lines[1] = lines[1]:sub(col_start)
+        lines[#lines] = lines[#lines]:sub(1, col_end)
+      end
+      local anchor_text = table.concat(lines, "\n")
+      add_comment(start, end_, anchor_text)
+    end)
   end, vim.tbl_extend("force", opts, { desc = "Add comment on selection" }))
 
   vim.keymap.set("n", km.delete, function()
@@ -491,9 +471,6 @@ local function register_keymaps()
     list.toggle()
   end, vim.tbl_extend("force", opts, { desc = "Toggle comment list" }))
 
-  vim.keymap.set("n", km.toggle_global_list, function()
-    global_list.toggle()
-  end, vim.tbl_extend("force", opts, { desc = "Toggle global comment list" }))
 
   vim.keymap.set("n", km.reply, function()
     reply_comment()
@@ -503,6 +480,21 @@ local function register_keymaps()
     resolve_comment()
   end, vim.tbl_extend("force", opts, { desc = "Resolve comment" }))
 
+  vim.keymap.set("n", "<leader>cX", function()
+    local file = current_file()
+    local all = store.get_for_file(file, { roots_only = true })
+    local unresolved = vim.tbl_filter(function(c) return not c.resolved end, all)
+    if #unresolved == 0 then
+      vim.notify("No unresolved comments", vim.log.levels.INFO)
+      return
+    end
+    for _, c in ipairs(unresolved) do
+      store.resolve(c.id, config.get_actor())
+    end
+    refresh_buf()
+    vim.notify(string.format("Resolved %d comments", #unresolved), vim.log.levels.INFO)
+  end, vim.tbl_extend("force", opts, { desc = "Resolve all comments" }))
+
   vim.keymap.set("n", km.preview, function()
     show_thread()
   end, vim.tbl_extend("force", opts, { desc = "Show comment thread" }))
@@ -511,13 +503,6 @@ local function register_keymaps()
     toggle_signs()
   end, vim.tbl_extend("force", opts, { desc = "Toggle comment signs" }))
 
-  vim.keymap.set("n", km.copy_storage_path, function()
-    copy_storage_path()
-  end, vim.tbl_extend("force", opts, { desc = "Copy comment storage path" }))
-
-  vim.keymap.set("n", km.open_storage, function()
-    open_storage_file()
-  end, vim.tbl_extend("force", opts, { desc = "Open comment storage file" }))
 end
 
 ---------------------------------------------------------------------------
@@ -530,35 +515,17 @@ local function register_autocommands()
   vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
     group = group,
     callback = function(ev)
-      local changed = store.reload_if_changed()
-      if changed then
-        refresh_all()
-      end
       if signs_visible then
         render_buf(ev.buf)
       end
     end,
   })
 
-  vim.api.nvim_create_autocmd("FocusGained", {
-    group = group,
-    callback = function()
-      if store.reload_if_changed() then
-        refresh_all()
-      end
-    end,
-  })
-
-  vim.api.nvim_create_autocmd("BufWritePost", {
+  vim.api.nvim_create_autocmd("TextChanged", {
     group = group,
     callback = function(ev)
       if signs_visible then
-        local name = vim.api.nvim_buf_get_name(ev.buf)
-        if name ~= "" then
-          local file = store.get_relative_path(name)
-          local file_comments = store.get_for_file(file)
-          highlights.refresh(ev.buf, file_comments)
-        end
+        render_buf(ev.buf)
       end
     end,
   })
@@ -569,30 +536,6 @@ local function register_autocommands()
       highlights.setup()
     end,
   })
-
-  -- File watcher: auto-refresh when .nvim-comments.json changes on disk
-  -- This enables real-time co-editing with external tools (e.g. Claude Code)
-  local uv = vim.uv or vim.loop
-  local watch_path = store.get_storage_path({ resolve = true })
-  local watcher = uv.new_fs_event()
-  if watcher then
-    local debounce_timer = nil
-    uv.fs_event_start(watcher, watch_path, {}, function(err)
-      if err then return end
-      -- Debounce: wait 100ms for writes to settle
-      if debounce_timer then
-        debounce_timer:stop()
-      end
-      debounce_timer = uv.new_timer()
-      debounce_timer:start(100, 0, vim.schedule_wrap(function()
-        debounce_timer:close()
-        debounce_timer = nil
-        if store.reload_if_changed() then
-          refresh_all()
-        end
-      end))
-    end)
-  end
 end
 
 ---------------------------------------------------------------------------
@@ -602,7 +545,6 @@ end
 function M.setup(opts)
   config.setup(opts)
   highlights.setup()
-  store.load()
   register_commands()
   register_keymaps()
   register_autocommands()
@@ -654,7 +596,7 @@ end
 
 --- Force reload comments from disk and repaint all visible overlays.
 function M.refresh()
-  refresh_from_disk(true)
+  refresh_buf()
 end
 
 return M
